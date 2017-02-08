@@ -7,12 +7,11 @@ import (
 )
 
 func main() {
-	err := api.Init()
+	err := api.Init("uniqid_agent.conf")
 	if err != nil {
 		fmt.Println("Init api failed")
 		return
 	}
-	api.SetConfig("uniqid_agent.conf")
 	config := api.GetConfig()
 	log := api.GetLog()
 

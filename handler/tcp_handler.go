@@ -29,7 +29,7 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 	var n int
 
 	addr :=  ip + ":" + port
-	th.log.Debug("Tcp worker start with %s", addr)
+	th.log.Info("Tcp worker start with %s", addr)
 
 	conn, err := net.DialTimeout("tcp", addr, 3 * time.Second)
 	if err != nil {
@@ -48,28 +48,32 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 		case data = <-th.ch:
 			bdata := make([]byte, data.Len + 3)
 			bdata[0] = data.Magic
-			th.log.Debug("data.Len is %d, uid is %s", data.Len, data.Data[0:32])
+			th.log.Debug("Data.Len is %d, uid is %s", data.Len, data.Data[0:32])
 			binary.LittleEndian.PutUint16(bdata[1:3], data.Len)
 			copy(bdata[3:], data.Data)
 
-			err = conn.SetWriteDeadline(time.Now().Add(time.Second))
+			err = conn.SetWriteDeadline(time.Now().Add(time.Second * 3))
 			if err != nil {
 				th.log.Error("Set write deadline to %s failed: %s", addr, err)
 				th.lock.Lock()
-				th.amap[ip] = 0
+				th.amap[ip]--
 				th.lock.Unlock()
+				//set data back
+				th.ch<-data
 				th.cch<-1
 				return
 			}
 
 			n, err = conn.Write(bdata)
 			if err != nil {
-				//TODO: connection failed, retry
+				//Close when onnection failed
+				//If io timeout occurred, connection is ESTAB, but retry not work
 				th.log.Error("Write to %s failed: %s", addr, err)
-				//TODO: if connection is broken
 				th.lock.Lock()
-				th.amap[ip] = 0
+				th.amap[ip]--
 				th.lock.Unlock()
+				//set data back
+				th.ch<-data
 				th.cch<-1
 				return
 			}
@@ -77,14 +81,14 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 		}
 	}
 
-	th.log.Debug("quit worker")
+	th.log.Info("Quit worker")
 }
 
 func (th *TcpHandler)tcpMonitor() {
 	for {
 		select {
 		case <- th.cch:
-			th.log.Debug("Got quit")
+			th.log.Info("Got quit")
 			time.Sleep(time.Second)
 			ns, err := net.LookupHost(th.name)
 			if err != nil {
@@ -97,9 +101,14 @@ func (th *TcpHandler)tcpMonitor() {
 			}
 			for _, ip := range ns {
 				th.lock.Lock()
-				if th.amap[ip] == 0 {
-					th.amap[ip] = 1
-					go th.tcpWorker(ip, th.port)
+				if th.amap[ip] < WORKER_PER_ADDR {
+					for {
+						if th.amap[ip] >= WORKER_PER_ADDR {
+							break
+						}
+						th.amap[ip]++
+						go th.tcpWorker(ip, th.port)
+					}
 				}
 				th.lock.Unlock()
 			}
@@ -113,7 +122,7 @@ func InitTcpHandler(addr string, log log.Log) error {
 		amap: make(map[string]int),
 		lock: &sync.RWMutex{},
 		ch  : make(chan *RouterData, 1024),
-		cch : make(chan int, 10),
+		cch : make(chan int, 32),
 		log : log,
 	}
 
@@ -135,14 +144,17 @@ func InitTcpHandler(addr string, log log.Log) error {
 	}
 
 	thandler.addrs = ns
-	//thandler.ch = make(chan RouterData, 1024)
-	//thandler.cch = make(chan int, 10)
 
 	for _, ip := range thandler.addrs {
 		thandler.lock.Lock()
-		thandler.amap[ip] = 1
+		for {
+			if thandler.amap[ip] >= WORKER_PER_ADDR {
+				break
+			}
+			thandler.amap[ip]++
+			go thandler.tcpWorker(ip, thandler.port)
+		}
 		thandler.lock.Unlock()
-		go thandler.tcpWorker(ip, thandler.port)
 	}
 
 	go thandler.tcpMonitor()
