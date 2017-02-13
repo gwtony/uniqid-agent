@@ -37,6 +37,7 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 		th.lock.Lock()
 		th.amap[ip] = 0
 		th.lock.Unlock()
+		time.Sleep(time.Second)
 		th.cch<-1
 		return
 	}
@@ -58,8 +59,6 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 				th.lock.Lock()
 				th.amap[ip]--
 				th.lock.Unlock()
-				//set data back
-				th.ch<-data
 				th.cch<-1
 				return
 			}
@@ -72,8 +71,7 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 				th.lock.Lock()
 				th.amap[ip]--
 				th.lock.Unlock()
-				//set data back
-				th.ch<-data
+				//set data back will be blocked under heavy stress
 				th.cch<-1
 				return
 			}
@@ -89,7 +87,7 @@ func (th *TcpHandler)tcpMonitor() {
 		select {
 		case <- th.cch:
 			th.log.Info("Got quit")
-			time.Sleep(time.Second)
+			//time.Sleep(time.Second)
 			ns, err := net.LookupHost(th.name)
 			if err != nil {
 				th.log.Error("Look up host %s failed", th.name)
@@ -152,6 +150,7 @@ func InitTcpHandler(addr string, log log.Log) error {
 				break
 			}
 			thandler.amap[ip]++
+			log.Debug("new worker")
 			go thandler.tcpWorker(ip, thandler.port)
 		}
 		thandler.lock.Unlock()
