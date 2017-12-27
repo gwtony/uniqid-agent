@@ -35,7 +35,7 @@ func (th *TcpHandler)tcpWorker(ip, port string) {
 	if err != nil {
 		th.log.Error("Connect to %s failed: %s", addr, err)
 		th.lock.Lock()
-		th.amap[ip] = 0
+		th.amap[ip]--
 		th.lock.Unlock()
 		time.Sleep(time.Second)
 		th.cch<-1
@@ -91,11 +91,11 @@ func (th *TcpHandler)tcpMonitor() {
 			ns, err := net.LookupHost(th.name)
 			if err != nil {
 				th.log.Error("Look up host %s failed", th.name)
-				break
+				goto use_old
 			}
 			if len(ns) < 1 {
 				th.log.Error("Look up host %s no avaliable addrs", th.name)
-				break
+				goto use_old
 			}
 			for _, ip := range ns {
 				th.lock.Lock()
@@ -111,6 +111,22 @@ func (th *TcpHandler)tcpMonitor() {
 				th.lock.Unlock()
 			}
 			th.addrs = ns
+			break
+
+use_old:
+			th.lock.Lock()
+			for _, ip := range th.addrs {
+				if th.amap[ip] < WORKER_PER_ADDR {
+					for {
+						if th.amap[ip] >= WORKER_PER_ADDR {
+							break
+						}
+						th.amap[ip]++
+						go th.tcpWorker(ip, th.port)
+					}
+				}
+			}
+			th.lock.Unlock()
 		}
 	}
 }
@@ -162,7 +178,7 @@ func InitTcpHandler(addr string, log log.Log) error {
 
 func SendToRouter(data []byte, size int) error {
 	rdata := &RouterData{}
-	rdata.Magic = byte(0x77)
+	rdata.Magic = byte(UNIQID_MAGIC)
 	rdata.Len = uint16(size)
 	rdata.Data = data
 	thandler.log.Debug("Send to router: data len is %d, uid is %s", rdata.Len, data[0:32])
